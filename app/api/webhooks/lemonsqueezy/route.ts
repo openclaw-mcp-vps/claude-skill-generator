@@ -1,70 +1,55 @@
 import { NextResponse } from "next/server";
-import { storePurchase, verifyLemonSqueezyWebhook } from "@/lib/lemonsqueezy";
+import { markPurchase } from "@/lib/purchase-store";
+import { verifyStripeSignature } from "@/lib/lemonsqueezy";
 
 export const runtime = "nodejs";
 
-type LemonWebhookBody = {
-  meta?: {
-    event_name?: string;
-  };
-  data?: {
-    id?: string;
-    attributes?: {
-      identifier?: string;
-      order_number?: number;
-      user_name?: string;
-      user_email?: string;
-      first_order_item?: {
-        product_name?: string;
-        variant_name?: string;
-      };
-    };
+type StripeCheckoutSession = {
+  id: string;
+  customer_email?: string;
+  customer_details?: {
+    email?: string;
   };
 };
 
-function isPurchaseEvent(eventName: string): boolean {
-  return ["order_created", "subscription_created", "subscription_resumed", "subscription_payment_success"].includes(
-    eventName
-  );
-}
+type StripeEvent = {
+  id: string;
+  type: string;
+  data: {
+    object: StripeCheckoutSession;
+  };
+};
 
-export async function POST(request: Request) {
-  const signature = request.headers.get("x-signature") ?? request.headers.get("X-Signature");
+export async function POST(request: Request): Promise<Response> {
+  const secret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!secret) {
+    return NextResponse.json({ error: "STRIPE_WEBHOOK_SECRET is not configured." }, { status: 500 });
+  }
+
+  const signature = request.headers.get("stripe-signature");
   const rawBody = await request.text();
 
-  if (!verifyLemonSqueezyWebhook(rawBody, signature)) {
-    return NextResponse.json({ received: false, error: "Invalid signature." }, { status: 401 });
+  const verified = verifyStripeSignature(rawBody, signature, secret);
+  if (!verified) {
+    return NextResponse.json({ error: "Invalid Stripe signature." }, { status: 401 });
   }
 
+  let event: StripeEvent;
   try {
-    const body = JSON.parse(rawBody) as LemonWebhookBody;
-    const eventName = body.meta?.event_name ?? "";
-
-    if (!isPurchaseEvent(eventName)) {
-      return NextResponse.json({ received: true, ignored: true });
-    }
-
-    const attributes = body.data?.attributes;
-    const firstOrderItem = attributes?.first_order_item;
-
-    const customerEmail = attributes?.user_email?.trim().toLowerCase() || "";
-    const orderId = attributes?.identifier || String(attributes?.order_number || body.data?.id || "");
-
-    if (!customerEmail || !orderId) {
-      return NextResponse.json({ received: false, error: "Missing order information." }, { status: 400 });
-    }
-
-    await storePurchase({
-      orderId,
-      customerEmail,
-      customerName: attributes?.user_name || "",
-      productName: firstOrderItem?.product_name || "",
-      variantName: firstOrderItem?.variant_name || "",
-      createdAt: new Date().toISOString()
-    });
-
-    return NextResponse.json({ received: true });
+    event = JSON.parse(rawBody) as StripeEvent;
   } catch {
-    return NextResponse.json({ received: false, error: "Malformed webhook payload." }, { status: 400 });
+    return NextResponse.json({ error: "Invalid event payload." }, { status: 400 });
   }
+
+  if (event.type === "checkout.session.completed") {
+    const email =
+      event.data.object.customer_email?.toLowerCase() ||
+      event.data.object.customer_details?.email?.toLowerCase();
+
+    if (email) {
+      await markPurchase(email, event.id);
+    }
+  }
+
+  return NextResponse.json({ received: true });
 }

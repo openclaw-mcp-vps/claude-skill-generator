@@ -1,35 +1,58 @@
-import type { NextRequest } from "next/server";
-import { NextResponse } from "next/server";
+import type { NextAuthOptions } from "next-auth";
+import CredentialsProvider from "next-auth/providers/credentials";
+import { z } from "zod";
 
-export const ACCESS_COOKIE_NAME = "csg_paid";
-const ACCESS_COOKIE_VALUE = "active";
+const credentialsSchema = z.object({
+  email: z.string().email(),
+  name: z.string().trim().min(2).max(80).optional()
+});
 
-export function hasPaidAccess(request: NextRequest): boolean {
-  return request.cookies.get(ACCESS_COOKIE_NAME)?.value === ACCESS_COOKIE_VALUE;
-}
+export const authOptions: NextAuthOptions = {
+  session: {
+    strategy: "jwt"
+  },
+  pages: {
+    signIn: "/generate"
+  },
+  providers: [
+    CredentialsProvider({
+      name: "Email",
+      credentials: {
+        email: { label: "Email", type: "email", placeholder: "you@company.com" },
+        name: { label: "Name", type: "text", placeholder: "Your name" }
+      },
+      async authorize(credentials) {
+        const parsed = credentialsSchema.safeParse(credentials);
+        if (!parsed.success) {
+          return null;
+        }
 
-export function attachPaidCookie(response: NextResponse): NextResponse {
-  response.cookies.set({
-    name: ACCESS_COOKIE_NAME,
-    value: ACCESS_COOKIE_VALUE,
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: 60 * 60 * 24 * 31
-  });
-  return response;
-}
-
-export function clearPaidCookie(response: NextResponse): NextResponse {
-  response.cookies.set({
-    name: ACCESS_COOKIE_NAME,
-    value: "",
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: 0
-  });
-  return response;
-}
+        const { email, name } = parsed.data;
+        return {
+          id: email.toLowerCase(),
+          email: email.toLowerCase(),
+          name: name ?? email.split("@")[0]
+        };
+      }
+    })
+  ],
+  callbacks: {
+    async jwt({ token, user }) {
+      if (user?.email) {
+        token.email = user.email;
+      }
+      if (user?.name) {
+        token.name = user.name;
+      }
+      return token;
+    },
+    async session({ session, token }) {
+      if (session.user) {
+        session.user.email = typeof token.email === "string" ? token.email : "";
+        session.user.name = typeof token.name === "string" ? token.name : session.user.name;
+      }
+      return session;
+    }
+  },
+  secret: process.env.NEXTAUTH_SECRET
+};

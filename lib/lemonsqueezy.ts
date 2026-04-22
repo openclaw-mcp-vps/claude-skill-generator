@@ -1,90 +1,53 @@
-import { createHmac, timingSafeEqual } from "crypto";
-import { mkdir, readFile, writeFile } from "fs/promises";
-import { join } from "path";
+import crypto from "node:crypto";
 
-export type StoredPurchase = {
-  orderId: string;
-  customerEmail: string;
-  customerName: string;
-  productName: string;
-  variantName: string;
-  createdAt: string;
-};
+export const ACCESS_COOKIE_NAME = "csg_paid";
+export const ACCESS_COOKIE_MAX_AGE = 60 * 60 * 24 * 30;
 
-const DATA_DIR = join(process.cwd(), "data");
-const PURCHASES_FILE = join(DATA_DIR, "purchases.json");
+export function getPaymentLink(): string {
+  return process.env.NEXT_PUBLIC_STRIPE_PAYMENT_LINK ?? "";
+}
 
-async function ensurePurchasesFile() {
-  await mkdir(DATA_DIR, { recursive: true });
-  try {
-    await readFile(PURCHASES_FILE, "utf8");
-  } catch {
-    await writeFile(PURCHASES_FILE, "[]", "utf8");
+export function hasAccessCookie(cookieStore: { get: (name: string) => { value: string } | undefined }): boolean {
+  return cookieStore.get(ACCESS_COOKIE_NAME)?.value === "1";
+}
+
+export function verifyStripeSignature(rawBody: string, signatureHeader: string | null, secret: string): boolean {
+  if (!signatureHeader) {
+    return false;
   }
-}
 
-async function readPurchases(): Promise<StoredPurchase[]> {
-  await ensurePurchasesFile();
-  const raw = await readFile(PURCHASES_FILE, "utf8");
-  try {
-    const parsed = JSON.parse(raw) as StoredPurchase[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
+  const parts = signatureHeader.split(",").reduce<Record<string, string[]>>((acc, part) => {
+    const [key, value] = part.split("=");
+    if (!key || !value) {
+      return acc;
+    }
+    if (!acc[key]) {
+      acc[key] = [];
+    }
+    acc[key].push(value);
+    return acc;
+  }, {});
+
+  const timestamp = parts.t?.[0];
+  const signatures = parts.v1 ?? [];
+
+  if (!timestamp || signatures.length === 0) {
+    return false;
   }
-}
 
-async function writePurchases(purchases: StoredPurchase[]) {
-  await ensurePurchasesFile();
-  await writeFile(PURCHASES_FILE, JSON.stringify(purchases, null, 2), "utf8");
-}
+  const signedPayload = `${timestamp}.${rawBody}`;
+  const expectedSignature = crypto.createHmac("sha256", secret).update(signedPayload).digest("hex");
 
-export async function storePurchase(purchase: StoredPurchase) {
-  const existing = await readPurchases();
-  const withoutDuplicate = existing.filter(
-    (item) => !(item.orderId === purchase.orderId && item.customerEmail === purchase.customerEmail)
-  );
-  withoutDuplicate.unshift(purchase);
-  await writePurchases(withoutDuplicate.slice(0, 5000));
-}
-
-export async function hasPurchased(customerEmail: string, orderId?: string): Promise<boolean> {
-  const normalizedEmail = customerEmail.trim().toLowerCase();
-  const purchases = await readPurchases();
-  return purchases.some((purchase) => {
-    const emailMatch = purchase.customerEmail.trim().toLowerCase() === normalizedEmail;
-    const orderMatch = orderId ? purchase.orderId === orderId : true;
-    return emailMatch && orderMatch;
+  return signatures.some((sig) => {
+    try {
+      const left = Buffer.from(sig, "hex");
+      const right = Buffer.from(expectedSignature, "hex");
+      if (left.length !== right.length) {
+        return false;
+      }
+      return crypto.timingSafeEqual(left, right);
+    } catch {
+      return false;
+    }
   });
-}
-
-export function verifyLemonSqueezyWebhook(rawBody: string, signature: string | null): boolean {
-  const secret = process.env.LEMON_SQUEEZY_WEBHOOK_SECRET;
-  if (!secret || !signature) {
-    return false;
-  }
-
-  const hmac = createHmac("sha256", secret);
-  const digest = hmac.update(rawBody).digest("hex");
-  const digestBuffer = Buffer.from(digest, "utf8");
-  const signatureBuffer = Buffer.from(signature, "utf8");
-
-  if (digestBuffer.length !== signatureBuffer.length) {
-    return false;
-  }
-
-  return timingSafeEqual(digestBuffer, signatureBuffer);
-}
-
-export function getLemonCheckoutUrl(): string {
-  const configured = process.env.NEXT_PUBLIC_LEMON_SQUEEZY_PRODUCT_ID?.trim() ?? "";
-  if (configured.startsWith("http://") || configured.startsWith("https://")) {
-    return configured;
-  }
-
-  if (configured.length > 0) {
-    return `https://checkout.lemonsqueezy.com/buy/${configured}`;
-  }
-
-  return "";
 }

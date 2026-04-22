@@ -1,39 +1,24 @@
 import type { Metadata } from "next";
-import Script from "next/script";
-import type { ReactNode } from "react";
 import "./globals.css";
 
-const siteUrl = "https://claude-skill-generator.app";
-
 export const metadata: Metadata = {
-  metadataBase: new URL(siteUrl),
-  title: {
-    default: "Claude Skill Generator",
-    template: "%s | Claude Skill Generator"
-  },
+  metadataBase: new URL("https://claude-skill-generator.dev"),
+  title: "Claude Skill Generator | Turn Docs into Installable SKILL.md Files",
   description:
-    "Paste any docs URL and generate an installable SKILL.md for ~/.claude/skills/ in under two minutes.",
-  keywords: [
-    "Claude Code",
-    "SKILL.md",
-    "developer tooling",
-    "documentation automation",
-    "AI dev tools",
-    "Claude skills"
-  ],
+    "Paste any framework docs URL and generate a production-ready Claude SKILL.md with frontmatter, workflows, and examples in under two minutes.",
   openGraph: {
-    type: "website",
-    url: siteUrl,
     title: "Claude Skill Generator",
     description:
-      "Generate complete Claude SKILL.md files from any docs URL. Copy, edit, and install in ~/.claude/skills/.",
+      "Paste docs URL, get an installable SKILL.md for Claude Code in under two minutes.",
+    type: "website",
+    url: "https://claude-skill-generator.dev",
     siteName: "Claude Skill Generator"
   },
   twitter: {
     card: "summary_large_image",
     title: "Claude Skill Generator",
     description:
-      "Paste docs URL. Get production-ready SKILL.md with frontmatter and examples in under two minutes."
+      "Generate Claude SKILL.md files from documentation URLs with frontmatter and examples."
   },
   robots: {
     index: true,
@@ -41,13 +26,14 @@ export const metadata: Metadata = {
   }
 };
 
-export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
+export default function RootLayout({
+  children
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
   return (
-    <html lang="en">
-      <body className="min-h-screen bg-[#0d1117] text-[var(--foreground)] antialiased">
-        {children}
-        <Script src="https://app.lemonsqueezy.com/js/lemon.js" strategy="afterInteractive" />
-      </body>
+    <html lang="en" className="dark">
+      <body className="bg-[#0d1117] text-[#e6edf3] antialiased">{children}</body>
     </html>
   );
 }
